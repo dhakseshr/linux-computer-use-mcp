@@ -78,16 +78,16 @@ def test_path_points_smooth_and_exact():
 class FakeShooter:
     order = ["fake"]
     working = "fake"
+    fast = True
 
     def __init__(self, size):
         from PIL import Image
-        import io
-        buf = io.BytesIO()
-        Image.new("RGB", size, "white").save(buf, "PNG")
-        self.data = buf.getvalue()
+        self.im = Image.new("RGB", size, "white")
 
-    def capture(self):
-        return self.data
+    def capture_image(self):
+        return self.im
+
+    capture = capture_image
 
 
 class RecInput:
@@ -171,3 +171,29 @@ def test_failsafe_corner(tmp_path):
     c._input.pos = (0, 0)  # user slammed the mouse into the corner
     with pytest.raises(SafetyStop):
         c.type_text("hello")
+
+
+def test_settle_returns_quickly_on_static_screen(tmp_path):
+    import time
+    c = make_ctl(tmp_path)
+    t = time.perf_counter()
+    frame = c.settle(timeout=2.0)
+    assert frame is not None and time.perf_counter() - t < 0.5
+
+
+def test_settle_waits_for_change_with_baseline(tmp_path):
+    import threading, time
+    from PIL import Image
+    c = make_ctl(tmp_path)
+    base = c.fingerprint()
+    threading.Timer(0.3, lambda: setattr(c.shooter, "im", Image.new("RGB", (2560, 1600), "black"))).start()
+    t = time.perf_counter()
+    frame = c.settle(timeout=3.0, baseline=base)
+    took = time.perf_counter() - t
+    assert 0.28 < took < 1.5 and frame.getpixel((0, 0)) == (0, 0, 0)
+
+
+def test_jpeg_default_and_size(tmp_path):
+    c = make_ctl(tmp_path)
+    data, fmt = c.screenshot()
+    assert fmt == "jpeg" and data[:2] == b"\xff\xd8"

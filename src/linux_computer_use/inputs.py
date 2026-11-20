@@ -120,6 +120,82 @@ class XdotoolInput:
         pass
 
 
+class XTestInput(XdotoolInput):
+    """X11 fast path: pointer motion, clicks and scrolling go straight through the XTEST
+    extension in-process (sub-millisecond, smooth 120 fps glide). Keyboard and typing still use
+    xdotool, which handles keyboard layouts and unicode correctly."""
+
+    name = "xtest"
+    BTN_NUM = {"left": 1, "middle": 2, "right": 3}
+    WHEEL_NUM = {"up": 4, "down": 5, "left": 6, "right": 7}
+
+    def __init__(self):
+        from Xlib import X, display
+        from Xlib.ext import xtest
+
+        self._X, self._xtest = X, xtest
+        self._d = display.Display()
+        if not self._d.has_extension("XTEST"):
+            raise InputError("X server has no XTEST extension")
+        self._root = self._d.screen().root
+        self._lock = threading.Lock()
+
+    def position(self) -> tuple[int, int] | None:
+        with self._lock:
+            p = self._root.query_pointer()
+            return p.root_x, p.root_y
+
+    def screen_size(self) -> tuple[int, int]:
+        s = self._d.screen()
+        return s.width_in_pixels, s.height_in_pixels
+
+    def _motion(self, x: int, y: int) -> None:
+        with self._lock:
+            self._xtest.fake_input(self._d, self._X.MotionNotify, x=x, y=y)
+            self._d.sync()
+
+    def move(self, x: int, y: int, duration: float) -> None:
+        start = self.position() or (x, y)
+        t0 = time.perf_counter()
+        elapsed = 0.0
+        for px, py, dt in path_points(start, (x, y), duration, fps=120):
+            self._motion(px, py)
+            elapsed += dt
+            delay = t0 + elapsed - time.perf_counter()  # frame-locked, no drift
+            if delay > 0:
+                time.sleep(delay)
+
+    def _press(self, btn: int, down: bool) -> None:
+        with self._lock:
+            self._xtest.fake_input(self._d, self._X.ButtonPress if down else self._X.ButtonRelease, btn)
+            self._d.sync()
+
+    def button(self, button: str, action: str = "click", count: int = 1) -> None:
+        b = self.BTN_NUM[button]
+        if action == "down":
+            return self._press(b, True)
+        if action == "up":
+            return self._press(b, False)
+        for i in range(count):
+            self._press(b, True)
+            self._press(b, False)
+            if i + 1 < count:
+                time.sleep(0.04)
+
+    def scroll(self, direction: str, amount: int) -> None:
+        b = self.WHEEL_NUM[direction]
+        for _ in range(amount):
+            self._press(b, True)
+            self._press(b, False)
+            time.sleep(0.008)
+
+    def close(self) -> None:
+        try:
+            self._d.close()
+        except Exception:
+            pass
+
+
 # ===================================================================== Wayland: dotool
 
 class DotoolInput:
@@ -289,11 +365,18 @@ class DryRunInput:
         pass
 
 
+def _raise(e: Exception):
+    raise e
+
+
 def make_input(session: Session, screen_size_fn, forced: str | None = None) -> InputBackend:
     choice = forced
     if not choice:
         if session.kind == "x11":
-            choice = "xdotool"
+            try:
+                return XTestInput() if which("xdotool") else _raise(InputError("xdotool missing"))
+            except Exception:
+                choice = "xdotool"  # python-xlib missing or no XTEST: fall back
         elif which("dotool"):
             choice = "dotool"
         elif which("ydotool"):
@@ -303,6 +386,8 @@ def make_input(session: Session, screen_size_fn, forced: str | None = None) -> I
                 "No Wayland input backend found. Install dotool (recommended) or ydotool, then run "
                 "`linux-computer-use-mcp setup-wayland` once to allow virtual input devices."
             )
+    if choice == "xtest":
+        return XTestInput()
     if choice == "xdotool":
         if not which("xdotool"):
             raise InputError("xdotool is not installed (sudo apt install xdotool / dnf install xdotool / pacman -S xdotool)")

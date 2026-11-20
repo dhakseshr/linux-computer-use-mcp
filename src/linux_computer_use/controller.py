@@ -10,7 +10,7 @@ from pathlib import Path
 
 from . import keys as K
 from .inputs import BUTTONS, DryRunInput, InputBackend, make_input
-from .screenshot import Screenshotter, downscale, png_size
+from .screenshot import Screenshotter, encode, frame_diff, thumbnail
 from .session import Session, detect_session
 
 
@@ -29,8 +29,11 @@ def _xdg(var: str, fallback: str) -> Path:
 class Config:
     max_width: int = 1280
     max_height: int = 800
-    image_format: str = "png"  # png | jpeg
-    move_duration: float = 0.25  # seconds for the visible pointer glide; 0 = jump
+    image_format: str = "jpeg"  # jpeg (fast, small) | png
+    jpeg_quality: int = 75
+    move_duration: float = 0.12  # seconds for the visible pointer glide; 0 = jump
+    auto_screenshot: bool = True  # actions return a screenshot once the screen settles
+    settle_timeout: float = 2.0  # max seconds to wait for the screen to stop changing
     type_delay_ms: int = 12
     dry_run: bool = False
     failsafe: bool = True
@@ -45,7 +48,10 @@ class Config:
         c.max_width = int(os.environ.get("LCU_MAX_WIDTH", c.max_width))
         c.max_height = int(os.environ.get("LCU_MAX_HEIGHT", c.max_height))
         c.image_format = os.environ.get("LCU_IMAGE_FORMAT", c.image_format).lower()
+        c.jpeg_quality = int(os.environ.get("LCU_JPEG_QUALITY", c.jpeg_quality))
         c.move_duration = float(os.environ.get("LCU_MOVE_DURATION", c.move_duration))
+        c.auto_screenshot = _env_bool("LCU_AUTO_SCREENSHOT", c.auto_screenshot)
+        c.settle_timeout = float(os.environ.get("LCU_SETTLE_TIMEOUT", c.settle_timeout))
         c.type_delay_ms = int(os.environ.get("LCU_TYPE_DELAY_MS", c.type_delay_ms))
         c.dry_run = _env_bool("LCU_DRY_RUN", c.dry_run)
         c.failsafe = _env_bool("LCU_FAILSAFE", c.failsafe)
@@ -99,7 +105,7 @@ class Controller:
             if self.session.kind == "x11" and hasattr(self._input, "screen_size"):
                 self.phys = self._input.screen_size()  # type: ignore[union-attr]
             else:
-                self.phys = png_size(self.shooter.capture())
+                self.phys = self.shooter.capture_image().size
         return self.phys
 
     def _scale_dims(self) -> tuple[tuple[int, int], tuple[int, int]]:
@@ -139,13 +145,47 @@ class Controller:
 
     # ------------------------------------------------------------ actions
 
-    def screenshot(self) -> tuple[bytes, str]:
+    def screenshot(self, image=None) -> tuple[bytes, str]:
+        """Encode `image` (a frame we already grabbed) or capture a fresh one."""
         if self.config.stop_file.exists():
             raise SafetyStop(f"Computer control is paused (stop file {self.config.stop_file} exists).")
-        raw = self.shooter.capture()
-        img, shot, phys = downscale(raw, self.config.max_width, self.config.max_height, self.config.image_format)
+        im = image if image is not None else self.shooter.capture_image()
+        fmt = "png" if self.config.image_format == "png" else "jpeg"
+        data, shot, phys = encode(im, self.config.max_width, self.config.max_height, fmt, self.config.jpeg_quality)
         self.shot, self.phys = shot, phys
-        return img, ("jpeg" if self.config.image_format == "jpeg" else "png")
+        return data, fmt
+
+    def fingerprint(self):
+        return thumbnail(self.shooter.capture_image()) if self.shooter.fast else None
+
+    def settle(self, timeout: float | None = None, baseline=None, min_wait: float = 0.06):
+        """Wait until the screen stops changing, instead of sleeping a fixed time.
+
+        With `baseline` (a fingerprint from before the action) we first wait for *some* change
+        (e.g. an app window appearing), then for it to stop. Returns the last full frame so it
+        can be reused as the screenshot, or None when captures are too slow to poll.
+        """
+        timeout = self.config.settle_timeout if timeout is None else timeout
+        if not self.shooter.fast:  # e.g. gnome-screenshot/portal: polling would be slow/flashy
+            time.sleep(min(0.4, timeout))
+            return None
+        t0 = time.perf_counter()
+        time.sleep(min_wait)
+        frame = self.shooter.capture_image()
+        prev = thumbnail(frame)
+        changed = baseline is None or frame_diff(prev, baseline) > 0.4
+        stable = 0
+        while time.perf_counter() - t0 < timeout:
+            time.sleep(0.035)
+            frame = self.shooter.capture_image()
+            th = thumbnail(frame)
+            if not changed and frame_diff(th, baseline) > 0.4:
+                changed = True
+            stable = stable + 1 if frame_diff(th, prev) < 0.12 else 0
+            prev = th
+            if changed and stable >= 2:
+                break
+        return frame
 
     def move(self, x: float, y: float, duration: float | None = None) -> None:
         px, py = self.to_phys(x, y)

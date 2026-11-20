@@ -58,10 +58,13 @@ def cmd_doctor(_args) -> int:
 
     shooter = Screenshotter(s, Config.from_env().screenshot_backend)
     try:
-        data = shooter.capture()
-        from .screenshot import png_size
-        w, h = png_size(data)
-        print(f"{_ok(True)} screenshot via {shooter.working}: {w}x{h}")
+        import time as _t
+
+        t0 = _t.perf_counter()
+        w, h = shooter.capture_image().size
+        ms = (_t.perf_counter() - t0) * 1000
+        print(f"{_ok(True)} screenshot via {shooter.working}: {w}x{h} in {ms:.0f} ms"
+              + ("" if shooter.fast else "  (slow backend: settle-detection falls back to short fixed waits)"))
     except Exception as e:
         print(f"{_ok(False)} screenshot: {e}")
         problems += 1

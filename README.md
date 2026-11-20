@@ -12,10 +12,15 @@ the Claude desktop app for Linux, Claude Code, and any other MCP client.
 ## Features
 
 - **Works on X11 and Wayland**: GNOME, KDE Plasma, Sway, Hyprland, river, Wayfire, XFCE, Cinnamon, MATE…
-- **You can watch it work**: the pointer moves smoothly to each target (eased glide, about 0.25 s) and text is typed key by key.
+- **You can watch it work**: the pointer glides smoothly to each target (120 fps eased motion) and text is typed key by key.
+- **Fast**:
+  - Every action returns a fresh screenshot as soon as the screen *stops changing*, so there are no guessed waits and no separate screenshot call.
+  - `batch` runs a whole sequence (click → type → Enter) in one call.
+  - On X11 the mouse goes straight through XTEST in-process (a click takes ~3 ms), and screenshots are compact JPEGs.
 - **Full toolset**: `screenshot`, `click` (left/right/middle, double/triple, with modifier keys),
   `move_mouse`, `drag`, `scroll`, `type_text`, `press_key` (`ctrl+s`, `alt+Tab`, `super`…), `hold_key`,
-  `cursor_position`, `open_application`, `list_applications`, `wait`, `system_info`.
+  `batch`, `wait` (returns early once the screen settles), `cursor_position`, `open_application`,
+  `list_applications`, `system_info`.
 - **HiDPI-aware**: screenshots are scaled down (default max 1280×800) and coordinates are mapped back to real pixels.
 - **Safety built in**: a kill switch command, a failsafe corner (X11), an action log and a dry-run mode. Details below.
 
@@ -23,7 +28,7 @@ the Claude desktop app for Linux, Claude Code, and any other MCP client.
 
 | Session | Screenshots | Mouse & keyboard |
 |---|---|---|
-| X11 (any desktop) | `mss` (bundled), falls back to ImageMagick `import` / `scrot` | `xdotool` |
+| X11 (any desktop) | `mss` (bundled), falls back to ImageMagick `import` / `scrot` | XTEST via `python-xlib` (mouse) + `xdotool` (keyboard) |
 | Wayland, GNOME | `gnome-screenshot` → XDG Screenshot portal | `dotool` (or `ydotool`) |
 | Wayland, KDE Plasma | `spectacle` → portal | `dotool` (or `ydotool`) |
 | Wayland, wlroots (Sway, Hyprland…) | `grim` → portal | `dotool` (or `ydotool`) |
@@ -128,12 +133,15 @@ Set these as environment variables, either in your shell or in the `"env"` block
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `LCU_MOVE_DURATION` | `0.25` | Seconds the pointer takes to glide to a target. `0` = jump instantly |
+| `LCU_MOVE_DURATION` | `0.12` | Seconds the pointer takes to glide to a target. `0` = jump instantly |
+| `LCU_AUTO_SCREENSHOT` | `1` | Actions return a screenshot once the screen settles |
+| `LCU_SETTLE_TIMEOUT` | `2.0` | Max seconds an action waits for the screen to stop changing |
+| `LCU_JPEG_QUALITY` | `75` | Screenshot JPEG quality |
 | `LCU_TYPE_DELAY_MS` | `12` | Delay between typed characters |
 | `LCU_MAX_WIDTH` / `LCU_MAX_HEIGHT` | `1280` / `800` | Max screenshot size sent to the model |
-| `LCU_IMAGE_FORMAT` | `png` | `png` or `jpeg` (smaller) |
+| `LCU_IMAGE_FORMAT` | `jpeg` | `jpeg` (fast, small) or `png` |
 | `LCU_SCREENSHOT_BACKEND` | auto | `mss`, `import`, `scrot`, `grim`, `spectacle`, `gnome-screenshot`, `portal` |
-| `LCU_INPUT_BACKEND` | auto | `xdotool`, `dotool`, `ydotool` |
+| `LCU_INPUT_BACKEND` | auto | `xtest`, `xdotool`, `dotool`, `ydotool` |
 | `LCU_SESSION` | auto | Force `x11` or `wayland` |
 | `LCU_FAILSAFE` | `1` | Top-left-corner failsafe (X11) |
 | `LCU_DRY_RUN` | `0` | Log actions without performing them |
@@ -141,6 +149,9 @@ Set these as environment variables, either in your shell or in the `"env"` block
 | `LCU_LOG_FILE` | `~/.local/state/linux-computer-use/actions.log` | Set empty to disable |
 
 ## Troubleshooting
+
+- **The Claude window keeps jumping in front of the app it's controlling**: snap Claude to one half of the
+  screen (`Super+Left`) and the target app to the other (`Super+Right`), or keep Claude on a second monitor.
 
 - **"No graphical session found"**: the MCP client launched the server without `DISPLAY`/`WAYLAND_DISPLAY`.
   Add them to the `"env"` block (`linux-computer-use-mcp config` prints the right values).

@@ -10,6 +10,7 @@ import os
 import secrets
 import subprocess
 import tempfile
+import threading
 import urllib.parse
 from typing import Callable
 
@@ -49,13 +50,19 @@ def _run_stdout(cmd: list[str], timeout: float = 15) -> bytes:
 
 # ---------------------------------------------------------------- X11
 
-def shot_mss() -> bytes:
-    import mss
-    import mss.tools
+_tls = threading.local()
 
-    with mss.mss() as sct:
-        img = sct.grab(sct.monitors[0])  # all monitors combined
-        return mss.tools.to_png(img.rgb, img.size)
+
+def shot_mss():
+    """Returns a PIL image directly (no PNG round trip). ~10-20 ms for 1080p."""
+    import mss
+    from PIL import Image
+
+    sct = getattr(_tls, "sct", None)
+    if sct is None:
+        sct = _tls.sct = mss.mss()
+    img = sct.grab(sct.monitors[0])  # all monitors combined
+    return Image.frombytes("RGB", img.size, img.bgra, "raw", "BGRX")
 
 
 def shot_import() -> bytes:
@@ -171,7 +178,22 @@ class Screenshotter:
         self.working: str | None = None
         self.errors: dict[str, str] = {}
 
-    def capture(self) -> bytes:
+    @property
+    def fast(self) -> bool:
+        """True when a capture is cheap enough to poll for 'screen settled' detection."""
+        return (self.working or (self.order[0] if self.order else "")) in ("mss", "grim")
+
+    def capture_image(self):
+        from PIL import Image
+
+        out = self.capture()
+        if isinstance(out, (bytes, bytearray)):
+            im = Image.open(io.BytesIO(out))
+            im.load()
+            return im.convert("RGB")
+        return out
+
+    def capture(self):
         order = [self.working] if self.working else self.order
         if not order:
             raise ScreenshotError(self._help())
@@ -199,27 +221,33 @@ class Screenshotter:
         return f"No screenshot backend worked on {self.session.label}. Tried: {tried}. Hint: {hint}."
 
 
-def png_size(data: bytes) -> tuple[int, int]:
+def encode(im, max_w: int, max_h: int, fmt: str = "jpeg", quality: int = 75) -> tuple[bytes, tuple[int, int], tuple[int, int]]:
+    """Downscale a PIL image and encode it. Return (bytes, (shot_w, shot_h), (phys_w, phys_h))."""
     from PIL import Image
 
-    with Image.open(io.BytesIO(data)) as im:
-        return im.size
+    phys = im.size
+    scale = min(1.0, max_w / phys[0], max_h / phys[1])
+    if scale < 1.0:
+        im = im.resize((max(1, round(phys[0] * scale)), max(1, round(phys[1] * scale))),
+                       Image.BILINEAR, reducing_gap=2.0)
+    out = io.BytesIO()
+    if fmt == "png":
+        im.save(out, "PNG", compress_level=1)
+    else:
+        im.save(out, "JPEG", quality=quality)
+    return out.getvalue(), im.size, phys
 
 
-def downscale(data: bytes, max_w: int, max_h: int, fmt: str = "png", quality: int = 80) -> tuple[bytes, tuple[int, int], tuple[int, int]]:
-    """Return (encoded image, (shot_w, shot_h), (phys_w, phys_h))."""
+def thumbnail(im):
+    """Tiny grayscale fingerprint used to detect when the screen stops changing."""
     from PIL import Image
 
-    with Image.open(io.BytesIO(data)) as im:
-        im = im.convert("RGB")
-        phys = im.size
-        scale = min(1.0, max_w / phys[0], max_h / phys[1])
-        if scale < 1.0:
-            im = im.resize((max(1, round(phys[0] * scale)), max(1, round(phys[1] * scale))), Image.LANCZOS)
-        out = io.BytesIO()
-        if fmt == "jpeg":
-            im.save(out, "JPEG", quality=quality, optimize=True)
-        else:
-            im.save(out, "PNG", optimize=True)
-        return out.getvalue(), im.size, phys
+    return im.convert("L").resize((160, 90), Image.BILINEAR, reducing_gap=None)
+
+
+def frame_diff(a, b) -> float:
+    """Mean absolute pixel difference (0-255) between two thumbnails."""
+    from PIL import ImageChops, ImageStat
+
+    return ImageStat.Stat(ImageChops.difference(a, b)).mean[0]
 

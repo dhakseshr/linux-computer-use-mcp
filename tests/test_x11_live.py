@@ -60,9 +60,17 @@ def test_end_to_end(tmp_path: Path):
                 pos = await s.call_tool("cursor_position", {})
                 assert pos.content[0].text == "200,150"
 
-                await s.call_tool("type_text", {"text": f"echo 'hello from claude' > {out}"})
-                await s.call_tool("press_key", {"keys": "enter"})
-                await s.call_tool("wait", {"seconds": 1})
+                info = await s.call_tool("system_info", {})
+                assert "input: xtest" in info.content[0].text, info
+
+                # one round trip: type + Enter, returns a screenshot after the screen settles
+                res = await s.call_tool("batch", {"actions": [
+                    {"action": "type", "text": f"echo 'hello from claude' > {out}"},
+                    {"action": "key", "keys": "enter"},
+                ]})
+                assert not _err(res), res
+                assert [c.type for c in res.content] == ["text", "image"], res
+                assert "Ran 2 actions" in res.content[0].text
 
                 (tmp_path / "STOP").write_text("x")
                 blocked = await s.call_tool("click", {"x": 10, "y": 10})
