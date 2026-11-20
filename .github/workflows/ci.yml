@@ -19,8 +19,8 @@ jobs:
         with:
           python-version: ${{ matrix.python }}
       - name: System packages
-        run: sudo apt-get update && sudo apt-get install -y xvfb xdotool xterm
+        run: sudo apt-get update && sudo apt-get install -y xvfb xdotool xterm openbox
       - name: Install
         run: pip install "${{ matrix.mcp }}" -e ".[dev]"
-      - name: Tests (unit + live X11 end-to-end)
+      - name: Tests (unit + live X11 end-to-end + window manager)
         run: xvfb-run -a -s "-screen 0 1920x1080x24" pytest -v

@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "linux-computer-use-mcp"
-version = "0.2.0"
+version = "0.3.0"
 description = "MCP server that lets Claude (or any MCP client) see and control a Linux desktop: X11 and Wayland (GNOME, KDE, wlroots)."
 readme = "README.md"
 license = "MIT"

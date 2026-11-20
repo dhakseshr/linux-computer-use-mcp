@@ -19,8 +19,15 @@ the Claude desktop app for Linux, Claude Code, and any other MCP client.
   - On X11 the mouse goes straight through XTEST in-process (a click takes ~3 ms), and screenshots are compact JPEGs.
 - **Full toolset**: `screenshot`, `click` (left/right/middle, double/triple, with modifier keys),
   `move_mouse`, `drag`, `scroll`, `type_text`, `press_key` (`ctrl+s`, `alt+Tab`, `super`…), `hold_key`,
-  `batch`, `wait` (returns early once the screen settles), `cursor_position`, `open_application`,
-  `list_applications`, `system_info`.
+  `batch`, `wait` (returns early once the screen settles), `focus_window`, `list_windows`, `zoom`
+  (full-resolution crop for small text), `cursor_position`, `open_application`, `list_applications`,
+  `system_info`.
+- **Smart waiting**: after each action it waits for the UI to *react*, then for a short quiet period, so it
+  doesn't return mid-animation or before a click has had any effect, and it gives up quickly when nothing changes.
+- **Won't click into the wrong window**: the Claude app pops to the front whenever you send it a message.
+  On X11 the server checks which window is really on top at the target point, and refuses to click there
+  or type into it if that window is protected (the Claude app, by default). Instead it tells the model to
+  `focus_window` the right app first.
 - **HiDPI-aware**: screenshots are scaled down (default max 1280×800) and coordinates are mapped back to real pixels.
 - **Safety built in**: a kill switch command, a failsafe corner (X11), an action log and a dry-run mode. Details below.
 
@@ -120,6 +127,10 @@ remote-controlling your machine.
   until you run `linux-computer-use-mcp resume`. **Bind `stop` to a keyboard shortcut** in your desktop's
   settings (e.g. `Super+Escape`) so you can halt it instantly.
 - **Failsafe corner (X11)**: slam the mouse into the top-left corner and the next action is refused.
+- **Protected windows (X11)**: clicks, drags and scrolls onto a protected window, and typing while one is
+  focused, are refused. That stops the model from typing into Claude's own chat box. The default is the
+  Claude app; set `LCU_PROTECT_WINDOWS` to a comma-separated list of app-class substrings, or to an empty
+  string to turn the guard off.
 - **Action log** at `~/.local/state/linux-computer-use/actions.log`.
 - **Dry run**: set `LCU_DRY_RUN=1` to log actions without performing them.
 - The server instructs the model to ask before sending messages, buying, deleting or changing settings,
@@ -144,14 +155,17 @@ Set these as environment variables, either in your shell or in the `"env"` block
 | `LCU_INPUT_BACKEND` | auto | `xtest`, `xdotool`, `dotool`, `ydotool` |
 | `LCU_SESSION` | auto | Force `x11` or `wayland` |
 | `LCU_FAILSAFE` | `1` | Top-left-corner failsafe (X11) |
+| `LCU_PROTECT_WINDOWS` | `claude` | Comma-separated app classes that must never receive clicks or keystrokes (X11). Empty = off |
 | `LCU_DRY_RUN` | `0` | Log actions without performing them |
 | `LCU_STOP_FILE` | `~/.config/linux-computer-use/STOP` | Kill-switch file |
 | `LCU_LOG_FILE` | `~/.local/state/linux-computer-use/actions.log` | Set empty to disable |
 
 ## Troubleshooting
 
-- **The Claude window keeps jumping in front of the app it's controlling**: snap Claude to one half of the
-  screen (`Super+Left`) and the target app to the other (`Super+Right`), or keep Claude on a second monitor.
+- **The Claude window keeps jumping in front of the app it's controlling**: on X11 the protected-window guard
+  stops stray input, and the model can call `focus_window` to bring the target back. For the smoothest
+  experience, snap Claude to one half of the screen (`Super+Left`) and the target app to the other half, or keep
+  Claude on a second monitor.
 
 - **"No graphical session found"**: the MCP client launched the server without `DISPLAY`/`WAYLAND_DISPLAY`.
   Add them to the `"env"` block (`linux-computer-use-mcp config` prints the right values).
@@ -167,6 +181,10 @@ Set these as environment variables, either in your shell or in the `"env"` block
 
 - On Wayland, apps can't read where the pointer is, so `cursor_position` reports the last position this server moved it to.
 - The X11 failsafe corner doesn't work on Wayland. Use the `stop` shortcut there.
+- `list_windows`, `focus_window` and the protected-window guard need X11. Wayland compositors don't let
+  apps see other apps' windows.
+- While the GNOME overview (Activities) is open, the guard still sees the windows underneath it, so clicks
+  over the Claude window's area may be refused. Use `focus_window` instead of the overview.
 - Flatpak or Snap sandboxed MCP clients may not be able to run the host's `xdotool`/`dotool`.
 
 ## Development
@@ -175,7 +193,7 @@ Set these as environment variables, either in your shell or in the `"env"` block
 git clone https://github.com/OWNER/linux-computer-use-mcp && cd linux-computer-use-mcp
 pip install -e ".[dev]"
 pytest                                                  # unit tests
-xvfb-run -s "-screen 0 1920x1080x24" pytest             # + live end-to-end test (needs xdotool, xterm)
+xvfb-run -s "-screen 0 1920x1080x24" pytest             # + live end-to-end tests (needs xdotool, xterm, openbox)
 ```
 
 Contributions are welcome, especially testing on more desktops, and backends such as the

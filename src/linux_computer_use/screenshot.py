@@ -238,16 +238,26 @@ def encode(im, max_w: int, max_h: int, fmt: str = "jpeg", quality: int = 75) -> 
     return out.getvalue(), im.size, phys
 
 
+THUMB = (256, 144)
+
+
 def thumbnail(im):
-    """Tiny grayscale fingerprint used to detect when the screen stops changing."""
+    """Small grayscale fingerprint used to detect when the screen changes / stops changing."""
     from PIL import Image
 
-    return im.convert("L").resize((160, 90), Image.BILINEAR, reducing_gap=None)
+    return im.convert("L").resize(THUMB, Image.BILINEAR, reducing_gap=None)
 
 
 def frame_diff(a, b) -> float:
-    """Mean absolute pixel difference (0-255) between two thumbnails."""
-    from PIL import ImageChops, ImageStat
+    """Fraction (0-1) of fingerprint pixels that changed noticeably between two thumbnails.
 
-    return ImageStat.Stat(ImageChops.difference(a, b)).mean[0]
+    Counting changed pixels (instead of averaging brightness) means a thin progress bar or a
+    spinner still registers as activity, while a blinking text caret (a couple of pixels) doesn't.
+    """
+    from PIL import ImageChops
 
+    hist = ImageChops.difference(a, b).point(lambda v: 255 if v > 12 else 0).histogram()
+    return hist[255] / float(a.size[0] * a.size[1])
+
+
+CHANGED = 0.0004  # > ~15 thumbnail pixels changed = "the screen changed"

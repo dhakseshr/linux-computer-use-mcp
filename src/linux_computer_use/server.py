@@ -24,7 +24,8 @@ Workflow: call `screenshot` once, then act using x/y coordinates measured in the
 screenshot's pixels (top-left is 0,0). Every action tool already returns a fresh screenshot as soon
 as the screen settles, so do NOT call `wait` or `screenshot` after actions. For speed, chain steps
 you are confident about into one `batch` call (e.g. click field -> type -> Enter), and prefer
-keyboard shortcuts (ctrl+l for a browser address bar, ctrl+t new tab, alt+Tab, super) when reliable.
+keyboard shortcuts (ctrl+l for a browser address bar, ctrl+t new tab) when reliable. Use focus_window to
+switch apps (instead of Alt+Tab or the overview) and zoom to read small text.
 
 Safety: never enter passwords, payment details or other secrets unless the user typed them to you
 for that purpose; ask before sending messages, purchasing, deleting data or changing system
@@ -76,12 +77,19 @@ mcp = _ToolRegistry()
 Shot = bool
 
 
-def _observe(msg: str, want: bool, timeout: float | None = None, baseline=None) -> list:
-    """Finish an action: wait for the screen to settle, then return text + screenshot in one go."""
+def _base(want: bool):
+    """Fingerprint of the screen right before an action (only needed when we'll observe after)."""
+    c = C()
+    return c.fingerprint() if (want and c.config.auto_screenshot) else None
+
+
+def _observe(msg: str, want: bool, timeout: float | None = None, baseline=None,
+             react: float = 0.6, quiet: float = 0.2) -> list:
+    """Finish an action: wait for the UI to react and settle, then return text + screenshot."""
     c = C()
     if not (want and c.config.auto_screenshot):
         return [msg]
-    frame = c.settle(timeout, baseline)
+    frame = c.settle(timeout, baseline, react=react, quiet=quiet)
     img, fmt = c.screenshot(frame)
     w, h = c.shot or (0, 0)
     return [f"{msg} Screen ({w}x{h}) after it settled:", Image(data=img, format=fmt)]
@@ -106,38 +114,43 @@ def click(x: int, y: int, button: Literal["left", "right", "middle"] = "left", c
     modifiers: keys held during the click, e.g. ["ctrl"] or ["shift"].
     screenshot: set false to skip the follow-up screenshot (e.g. mid-sequence).
     """
+    base = _base(screenshot)
     C().click(x, y, button, clicks, modifiers)
-    return _observe(f"Clicked {button} x{clicks} at {x},{y}.", screenshot)
+    return _observe(f"Clicked {button} x{clicks} at {x},{y}.", screenshot, baseline=base)
 
 
 @mcp.tool()
 def move_mouse(x: int, y: int, screenshot: Shot = True) -> list:
     """Move the pointer to x,y without clicking (hover to reveal tooltips or menus)."""
+    base = _base(screenshot)
     C().move(x, y)
-    return _observe(f"Moved to {x},{y}.", screenshot)
+    return _observe(f"Moved to {x},{y}.", screenshot, baseline=base, react=0.4)
 
 
 @mcp.tool()
 def drag(start_x: int, start_y: int, end_x: int, end_y: int,
          button: Literal["left", "right", "middle"] = "left", screenshot: Shot = True) -> list:
     """Press at the start point, glide to the end point, release. For moving windows, sliders, selections."""
+    base = _base(screenshot)
     C().drag(start_x, start_y, end_x, end_y, button)
-    return _observe(f"Dragged from {start_x},{start_y} to {end_x},{end_y}.", screenshot)
+    return _observe(f"Dragged from {start_x},{start_y} to {end_x},{end_y}.", screenshot, baseline=base)
 
 
 @mcp.tool()
 def scroll(direction: Literal["up", "down", "left", "right"], amount: int = 3,
            x: int | None = None, y: int | None = None, screenshot: Shot = True) -> list:
     """Scroll the mouse wheel by `amount` notches, optionally after moving to x,y first."""
+    base = _base(screenshot)
     C().scroll(x, y, direction, amount)
-    return _observe(f"Scrolled {direction} {amount}.", screenshot)
+    return _observe(f"Scrolled {direction} {amount}.", screenshot, baseline=base)
 
 
 @mcp.tool()
 def type_text(text: str, screenshot: Shot = True) -> list:
     """Type text into the focused field, as if from the keyboard. Newlines press Enter."""
+    base = _base(screenshot)
     C().type_text(text)
-    return _observe(f"Typed {len(text)} characters.", screenshot)
+    return _observe(f"Typed {len(text)} characters.", screenshot, baseline=base)
 
 
 @mcp.tool()
@@ -146,15 +159,17 @@ def press_key(keys: str, repeat: int = 1, screenshot: Shot = True) -> list:
 
     Aliases like enter, esc, cmd/win (= super), pgdn, del are accepted.
     """
+    base = _base(screenshot)
     C().key(keys, repeat)
-    return _observe(f"Pressed {keys}" + (f" x{repeat}." if repeat > 1 else "."), screenshot)
+    return _observe(f"Pressed {keys}" + (f" x{repeat}." if repeat > 1 else "."), screenshot, baseline=base)
 
 
 @mcp.tool()
 def hold_key(keys: str, seconds: float, screenshot: Shot = True) -> list:
     """Hold a key or combo down for some seconds (max 10), then release."""
+    base = _base(screenshot)
     C().hold_key(keys, seconds)
-    return _observe(f"Held {keys} for {seconds}s.", screenshot)
+    return _observe(f"Held {keys} for {seconds}s.", screenshot, baseline=base)
 
 
 @mcp.tool()
@@ -171,7 +186,8 @@ def wait(seconds: float = 1.0, until_settled: bool = True, screenshot: Shot = Tr
     seconds = max(0.0, min(30.0, seconds))
     c = C()
     if until_settled and c.shooter.fast:
-        frame = c.settle(timeout=seconds)
+        # loading screens move slowly, so require a full second of stillness
+        frame = c.settle(timeout=seconds, quiet=min(1.0, max(0.3, seconds / 3)))
         if not (screenshot and c.config.auto_screenshot):
             return ["Screen settled."]
         img, fmt = c.screenshot(frame)
@@ -191,7 +207,8 @@ def open_application(name: str, screenshot: Shot = True) -> list:
     c.guard(f"open_application {app.id}")
     base = c.fingerprint()
     A.launch(app)
-    return _observe(f"Launched {app.name} ({app.id}).", screenshot, timeout=8.0, baseline=base)
+    return _observe(f"Launched {app.name} ({app.id}).", screenshot, timeout=10.0, baseline=base,
+                    react=8.0, quiet=0.6)
 
 
 def _run_step(step: dict) -> str:
@@ -222,17 +239,21 @@ def _run_step(step: dict) -> str:
     if a == "wait":
         secs = max(0.0, min(30.0, float(g("seconds", 1))))
         if g("until_settled", True) and c.shooter.fast:
-            c.settle(timeout=secs)
+            c.settle(timeout=secs, quiet=min(1.0, max(0.3, secs / 3)))
         else:
             time.sleep(secs)
         return "wait"
+    if a == "focus_window":
+        w = c.focus_window(str(g("query")))
+        c.settle(timeout=1.5, react=0.0, quiet=0.2)
+        return f"focus {w.title}"
     if a == "open_application":
         app = A.find_app(str(g("name")))
         if not app:
             raise ValueError(f"no installed application matches {g('name')!r}")
         base = c.fingerprint()
         A.launch(app)
-        c.settle(timeout=8.0, baseline=base)
+        c.settle(timeout=10.0, baseline=base, react=8.0, quiet=0.6)
         return f"open {app.name}"
     raise ValueError(f"unknown action {a!r}")
 
@@ -256,6 +277,7 @@ def batch(actions: list[dict], screenshot: Shot = True) -> list:
       {"action": "hold_key", "keys": "shift", "seconds": 1}
       {"action": "wait", "seconds": 3}          (returns early once the screen settles)
       {"action": "open_application", "name": "Google Chrome"}
+      {"action": "focus_window", "query": "WhatsApp"}
     Coordinates refer to the most recent screenshot. Between steps that can change the UI (clicks,
     keys, scrolls) the screen is briefly allowed to settle. Stops at the first failing step.
     """
@@ -265,15 +287,51 @@ def batch(actions: list[dict], screenshot: Shot = True) -> list:
         raise ValueError("at most 50 actions per batch")
     c = C()
     done: list[str] = []
+    first_base = _base(screenshot)
     for i, step in enumerate(actions):
+        base = c.fingerprint() if c.shooter.fast else None
         try:
             done.append(_run_step(step))
         except Exception as e:
             msg = f"Step {i + 1} ({step.get('action')}) failed: {type(e).__name__}: {e}. Completed: {done or 'nothing'}."
             return _observe(msg, screenshot, timeout=0.5)
         if i + 1 < len(actions) and str(step.get("action", "")).lower() in SETTLE_AFTER:
-            c.settle(timeout=1.0)
-    return _observe(f"Ran {len(done)} actions: {'; '.join(done)}.", screenshot)
+            c.settle(timeout=1.5, baseline=base, react=0.5, quiet=0.15)
+    return _observe(f"Ran {len(done)} actions: {'; '.join(done)}.", screenshot, baseline=first_base)
+
+
+@mcp.tool()
+def list_windows() -> str:
+    """List open windows on the current workspace, topmost first (X11 only), with their position in
+    screenshot coordinates. Use focus_window to bring one to the front."""
+    c = C()
+    rows = []
+    for w in c.list_windows():
+        x, y = c.to_shot(w.x, w.y)
+        x2, y2 = c.to_shot(w.x + w.w, w.y + w.h)
+        flags = ",".join(f for f, on in (("active", w.active), ("minimized", w.minimized)) if on)
+        rows.append(f"{w.title or '(untitled)'} [{w.wm_class}] at {x},{y} to {x2},{y2}" + (f" ({flags})" if flags else ""))
+    return "\n".join(rows) or "No windows."
+
+
+@mcp.tool()
+def focus_window(query: str, screenshot: Shot = True) -> list:
+    """Bring a window to the front and focus it, matched by part of its title or app class,
+    e.g. "Chrome", "WhatsApp", "Terminal". Much faster and more reliable than clicking through the
+    overview or Alt+Tab (X11 only)."""
+    c = C()
+    base = _base(screenshot)
+    w = c.focus_window(query)
+    return _observe(f"Focused '{w.title}' [{w.wm_class}].", screenshot, baseline=base, react=0.8, quiet=0.25)
+
+
+@mcp.tool()
+def zoom(x: int, y: int, width: int, height: int) -> list:
+    """Return a full-resolution crop of a region of the latest screenshot (coordinates in screenshot
+    pixels), to read small text or inspect icons precisely. Coordinates for other tools still refer
+    to the full screenshot, not to this crop."""
+    data, fmt, size = C().zoom(x, y, width, height)
+    return [f"Zoomed region {x},{y} {width}x{height} (shown at {size[0]}x{size[1]}):", Image(data=data, format=fmt)]
 
 
 @mcp.tool()
