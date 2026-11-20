@@ -79,9 +79,9 @@ linux-computer-use-mcp setup-wayland --yes
 ### 2. The server
 
 ```bash
-pipx install git+https://github.com/OWNER/linux-computer-use-mcp
+pipx install git+https://github.com/dhakseshr/linux-computer-use-mcp
 # or with uv:
-uv tool install git+https://github.com/OWNER/linux-computer-use-mcp
+uv tool install git+https://github.com/dhakseshr/linux-computer-use-mcp
 ```
 
 ### 3. Check it
@@ -190,7 +190,7 @@ Set these as environment variables, either in your shell or in the `"env"` block
 ## Development
 
 ```bash
-git clone https://github.com/OWNER/linux-computer-use-mcp && cd linux-computer-use-mcp
+git clone https://github.com/dhakseshr/linux-computer-use-mcp && cd linux-computer-use-mcp
 pip install -e ".[dev]"
 pytest                                                  # unit tests
 xvfb-run -s "-screen 0 1920x1080x24" pytest             # + live end-to-end tests (needs xdotool, xterm, openbox)

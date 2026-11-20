@@ -34,8 +34,8 @@ dev = ["pytest>=8"]
 linux-computer-use-mcp = "linux_computer_use.cli:main"
 
 [project.urls]
-Homepage = "https://github.com/OWNER/linux-computer-use-mcp"
-Issues = "https://github.com/OWNER/linux-computer-use-mcp/issues"
+Homepage = "https://github.com/dhakseshr/linux-computer-use-mcp"
+Issues = "https://github.com/dhakseshr/linux-computer-use-mcp/issues"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/linux_computer_use"]
