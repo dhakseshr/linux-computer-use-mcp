@@ -1,0 +1,43 @@
+[build-system]
+requires = ["hatchling>=1.21"]
+build-backend = "hatchling.build"
+
+[project]
+name = "linux-computer-use-mcp"
+version = "0.1.0"
+description = "MCP server that lets Claude (or any MCP client) see and control a Linux desktop: X11 and Wayland (GNOME, KDE, wlroots)."
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.10"
+authors = [{ name = "linux-computer-use-mcp contributors" }]
+keywords = ["mcp", "claude", "computer-use", "linux", "wayland", "x11", "automation"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Environment :: X11 Applications",
+  "Intended Audience :: Developers",
+  "Operating System :: POSIX :: Linux",
+  "Programming Language :: Python :: 3",
+  "Topic :: Desktop Environment",
+]
+dependencies = [
+  "mcp>=1.10",
+  "pillow>=10",
+  "mss>=9",
+  "jeepney>=0.8",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[project.scripts]
+linux-computer-use-mcp = "linux_computer_use.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/OWNER/linux-computer-use-mcp"
+Issues = "https://github.com/OWNER/linux-computer-use-mcp/issues"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/linux_computer_use"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
